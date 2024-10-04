@@ -8,7 +8,7 @@ WHAT WE NEED TO STUDY :
 5. K fold cross validation
 
 SIMPLIFIED WORKFLOW:
-1. Look into feature engineering because our data is imbalanced
+1. Look into Data Preprocessing and feature engineering because our data is imbalanced
 2. Perform feature Selection
 3. Create the model (Use Ensemble Learning) by first splitting the data using K fold cross validation technique.
 4. Evaluate the model (i.e. performance metrics)
