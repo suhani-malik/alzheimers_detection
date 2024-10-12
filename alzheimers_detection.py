@@ -3,13 +3,15 @@ import glob
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.decomposition import PCA
-from sklearn.ensemble import VotingClassifier
+from sklearn.manifold import TSNE
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.preprocessing import LabelEncoder
 from sklearn.utils.class_weight import compute_class_weight
 from imblearn.under_sampling import RandomUnderSampler
 from PIL import Image
+from hyperopt import hp, fmin, tpe, Trials
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 folder_names = ['Mild_Demented', 'Moderate_Demented', 'Non_Demented', 'Very_Mild_Demented']
 
@@ -52,6 +54,9 @@ kf = KFold(n_folds, shuffle=True, random_state=42)
 
 
 accuracy_scores = []
+precision_scores = []
+recall_scores = []
+f1_scores = []
 
 
 for train_index, test_index in kf.split(image_data):
@@ -65,17 +70,57 @@ for train_index, test_index in kf.split(image_data):
     X_test_pca = pca.transform(X_test)
 
     
-    classifiers = [
-        ('svm_linear', SVC(kernel='linear', probability=True)),
-        ('svm_rbf', SVC(kernel='rbf', probability=True)),
-        ('svm_poly', SVC(kernel='poly', probability=True))
-    ]
-    voting_clf = VotingClassifier(estimators=classifiers, voting='soft')
-    voting_clf.fit(X_train_pca, y_train)
+    tsne = TSNE(n_components=2, random_state=42)
+    X_train_tsne = tsne.fit_transform(X_train_pca)
+    X_test_tsne = tsne.fit_transform(X_test_pca)
+
+        
+    space = {
+        'C': hp.loguniform('C', -5, 2),
+        'kernel': hp.choice('kernel', ['linear', 'rbf', 'poly']),
+        'gamma': hp.loguniform('gamma', -5, 0),
+        'degree': hp.quniform('degree', 2, 10, 1)
+    }
+
+    def objective(params):
+        
+        svc = SVC(**params)
+        svc.degree = int(svc.degree)
+        svc.fit(X_train_tsne, y_train)
+        
+        
+        y_pred = svc.predict(X_test_tsne)
+        accuracy = accuracy_score(y_test, y_pred)
+        
+        
+        return -accuracy
 
     
-    y_pred = voting_clf.predict(X_test_pca)
+    trials = Trials()
+    best = fmin(objective, space, algo=tpe.suggest, trials=trials, max_evals=50)
+
+
+    svc = SVC(**best)
+    svc.fit(X_train_tsne, y_train)
+
+    
+    y_pred = svc.predict(X_test_tsne)
     accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, average='macro')
+    recall = recall_score(y_test, y_pred, average='macro')
+    f1 = f1_score(y_test, y_pred, average='macro')
+    
     accuracy_scores.append(accuracy)
+    precision_scores.append(precision)
+    recall_scores.append(recall)
+    f1_scores.append(f1)
+
+    print("Classification Report:")
+    print(classification_report(y_test, y_pred))
+    print("Confusion Matrix:")
+    print(confusion_matrix(y_test, y_pred))
 
 print(f'Average Accuracy: {np.mean(accuracy_scores):.3f}')
+print(f'Average Precision: {np.mean(precision_scores):.3f}')
+print(f'Average Recall: {np.mean(recall_scores):.3f}')
+print(f'Average F1 Score: {np.mean(f1_scores):.3f}')
