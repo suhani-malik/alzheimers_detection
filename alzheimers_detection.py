@@ -1,126 +1,132 @@
 import os
-import glob
+import cv2  # for image processing
 import numpy as np
-from sklearn.model_selection import KFold
+import random
+from sklearn.model_selection import train_test_split, GridSearchCV, KFold
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 from sklearn.svm import SVC
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
-from sklearn.preprocessing import LabelEncoder
-from sklearn.utils.class_weight import compute_class_weight
-from imblearn.under_sampling import RandomUnderSampler
-from PIL import Image
-from hyperopt import hp, fmin, tpe, Trials
-from sklearn.metrics import precision_score, recall_score, f1_score
+from sklearn.metrics import accuracy_score
+import matplotlib.pyplot as plt
 
-folder_names = ['Mild_Demented', 'Moderate_Demented', 'Non_Demented', 'Very_Mild_Demented']
 
-image_data = []
-labels = []
+data_dir = r"C:\Users\suhan\Desktop\Capstone\alzheimers_detection\ADNI DATASET"  # Update with the path to your ADNI dataset
+categories = ["Non_Demented", "Very_Mild_Demented", "Mild_Demented", "Moderate_Demented"]
 
-dataset_path = r'C:\Users\suhan\Desktop\Capstone\alzheimers_detection\ADNI DATASET'
+img_size = 128  
 
-for folder_name in folder_names:
-    folder_path = os.path.join(dataset_path, folder_name)
-    image_files = glob.glob(os.path.join(folder_path, '*.jpg'))
+def load_images(data_dir, categories):
+    data = []
+    for category in categories:
+        path = os.path.join(data_dir, category)
+        class_num = categories.index(category)  
+        for img in os.listdir(path):
+            try:
+                img_array = cv2.imread(os.path.join(path, img), cv2.IMREAD_GRAYSCALE)
+                resized_img = cv2.resize(img_array, (img_size, img_size))
+                data.append([resized_img, class_num])
+            except Exception as e:
+                print(f"Error loading image {img}: {e}")
+    return data
+
+data = load_images(data_dir, categories)
+
+
+random.shuffle(data)
+
+
+X = []
+y = []
+
+for features, label in data:
+    X.append(features)
+    y.append(label)
+
+
+X = np.array(X).reshape(-1, img_size * img_size)  
+X = X / 255.0  
+y = np.array(y)
+
+# Step 1: Tune PCA by plotting explained variance
+pca = PCA().fit(X)  
+cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+'''
+# Plot the cumulative explained variance
+plt.plot(cumulative_variance)
+plt.xlabel('Number of Components')
+plt.ylabel('Cumulative Explained Variance')
+plt.title('PCA Explained Variance')
+plt.grid()
+plt.show()
+'''
+
+pca = PCA(n_components=0.95)  
+pca = pca.fit_transform(X)
+
+# Step 2: Use GridSearchCV to tune SVM parameters
+
+
+param_grid = {
+    'C': [0.1, 1, 10, 100],  # Regularization parameter
+    'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],  # Kernel type
+    'gamma': ['scale', 'auto'],  # Kernel coefficient
+    'degree': [2, 3, 4]  # Degree for 'poly' kernel
+}
+
+
+svm = SVC()
+
+
+grid_search = GridSearchCV(svm, param_grid, cv=5, scoring='accuracy', verbose=2)
+
+
+grid_search.fit(X_pca, y)
+
+
+print("Best parameters found by GridSearchCV:", grid_search.best_params_)
+
+
+best_svm = grid_search.best_estimator_
+
+# Step 3: Evaluate the best model with k-fold cross-validation
+kf = KFold(n_splits=3, shuffle=True, random_state=42)
+accuracies = []
+
+for train_index, test_index in kf.split(X_pca):
+    X_train, X_test = X_pca[train_index], X_pca[test_index]
+    y_train, y_test = y[train_index], y[test_index]
     
-    for image_file in image_files:
-        image = np.array(Image.open(image_file))
-        image_data.append(image)
-        
-        
-        if folder_name == 'Mild_Demented':
-            labels.append(0)
-        elif folder_name == 'Moderate_Demented':
-            labels.append(1)
-        elif folder_name == 'Non_Demented':
-            labels.append(2)
-        elif folder_name == 'Very_Mild_Demented':
-            labels.append(3)
-
-
-image_data = np.array(image_data)
-labels = np.array(labels)
-print("Image data shape:", image_data.shape)
-print("Labels shape:", labels.shape)
-
-image_data = image_data.reshape(image_data.shape[0], -1)
-
-
-n_folds = 5
-
-
-kf = KFold(n_folds, shuffle=True, random_state=42)
-
-
-accuracy_scores = []
-precision_scores = []
-recall_scores = []
-f1_scores = []
-
-
-for train_index, test_index in kf.split(image_data):
-    X_train, X_test = image_data[train_index], image_data[test_index]
-    y_train, y_test = labels[train_index], labels[test_index]
-
+    # Fit the best SVM model
+    best_svm.fit(X_train, y_train)
     
-    pca = PCA(n_components=0.95)
-    pca.fit(X_train)
-    X_train_pca = pca.transform(X_train)
-    X_test_pca = pca.transform(X_test)
-
-    
-    tsne = TSNE(n_components=2, random_state=42)
-    X_train_tsne = tsne.fit_transform(X_train_pca)
-    X_test_tsne = tsne.fit_transform(X_test_pca)
-
-        
-    space = {
-        'C': hp.loguniform('C', -5, 2),
-        'kernel': hp.choice('kernel', ['linear', 'rbf', 'poly']),
-        'gamma': hp.loguniform('gamma', -5, 0),
-        'degree': hp.quniform('degree', 2, 10, 1)
-    }
-
-    def objective(params):
-        
-        svc = SVC(**params)
-        svc.degree = int(svc.degree)
-        svc.fit(X_train_tsne, y_train)
-        
-        
-        y_pred = svc.predict(X_test_tsne)
-        accuracy = accuracy_score(y_test, y_pred)
-        
-        
-        return -accuracy
-
-    
-    trials = Trials()
-    best = fmin(objective, space, algo=tpe.suggest, trials=trials, max_evals=50)
-
-
-    svc = SVC(**best)
-    svc.fit(X_train_tsne, y_train)
-
-    
-    y_pred = svc.predict(X_test_tsne)
+    # Predict on test set
+    y_pred = best_svm.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred, average='macro')
-    recall = recall_score(y_test, y_pred, average='macro')
-    f1 = f1_score(y_test, y_pred, average='macro')
-    
-    accuracy_scores.append(accuracy)
-    precision_scores.append(precision)
-    recall_scores.append(recall)
-    f1_scores.append(f1)
+    accuracies.append(accuracy)
 
-    print("Classification Report:")
-    print(classification_report(y_test, y_pred))
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
 
-print(f'Average Accuracy: {np.mean(accuracy_scores):.3f}')
-print(f'Average Precision: {np.mean(precision_scores):.3f}')
-print(f'Average Recall: {np.mean(recall_scores):.3f}')
-print(f'Average F1 Score: {np.mean(f1_scores):.3f}')
+print(f"Cross-validated accuracy of the best SVM model: {np.mean(accuracies)}")
+
+'''
+# Step 4: Visualize SVM decision boundary (with PCA-reduced data to 2D for visualization)
+pca_2d = PCA(n_components=2)
+X_2d = pca_2d.fit_transform(X)
+
+best_svm.fit(X_2d, y)
+
+h = .02  
+x_min, x_max = X_2d[:, 0].min() - 1, X_2d[:, 0].max() + 1
+y_min, y_max = X_2d[:, 1].min() - 1, X_2d[:, 1].max() + 1
+xx, yy = np.meshgrid(np.arange(x_min, x_max, h), np.arange(y_min, y_max, h))
+
+
+Z = best_svm.predict(np.c_[xx.ravel(), yy.ravel()])
+Z = Z.reshape(xx.shape)
+plt.contourf(xx, yy, Z, alpha=0.8)
+
+
+plt.scatter(X_2d[:, 0], X_2d[:, 1], c=y, edgecolors='k', marker='o')
+plt.xlabel('Principal Component 1')
+plt.ylabel('Principal Component 2')
+plt.title('SVM Decision Boundary with PCA-reduced Data')
+plt.show()
+'''

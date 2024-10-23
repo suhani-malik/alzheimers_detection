@@ -1,6 +1,7 @@
-!pip install scikit-optimize
+#!pip install scikit-optimize
 import numpy as np
 import pandas as pd
+import os
 from sklearn.model_selection import train_test_split
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -10,7 +11,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from tensorflow.keras.applications import VGG16
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from sklearn.preprocessing import StandardScaler
-
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # Step 1: Load your 6400 image dataset from directories using ImageDataGenerator
 datagen = ImageDataGenerator(rescale=1./255)
 image_size = (128, 128)
